@@ -4,23 +4,29 @@
 
 StateMachine stateMachine;     //keeping track of transitions based on state and action
 
-GarageState GarageLeft  = {undefined, undefined, LeftTrigger};      //the GarageState struct keeps track of the current state, the previous state and the trigger to be used for each garage
-GarageState GarageRight = {undefined, undefined, RightTrigger};
+GarageState GarageLeft  = {undefined, undefined, LeftTrigger,  LeftState};      //the GarageState struct keeps track of the current state, the previous state and the trigger to be used for each garage
+GarageState GarageRight = {undefined, undefined, RightTrigger, RightState};
 
 InterruptHandler CommandInterrupts[CmdSize];
 InterruptHandler SensorInterrupts[SensorSize];
 
+inline void initHandler(InterruptHandler* h, uint8_t function, Action action, GarageState* g){
+    h->function = function;
+    h->action = action;
+    h->garage = g;
+}
+
 void initInterruptHandler() {
 
-    CommandInterrupts[CmdLeftOpen]      = initHandler(CommandInterrupt, LeftCommandOpen,   ACTION_open,  &GarageLeft);
-    CommandInterrupts[CmdLeftClose]     = initHandler(CommandInterrupt, LeftCommandClose,  ACTION_close, &GarageLeft);
-    CommandInterrupts[CmdRightOpen]     = initHandler(CommandInterrupt, RightCommandOpen,  ACTION_open,  &GarageRight);
-    CommandInterrupts[CmdRightClose]    = initHandler(CommandInterrupt, RightCommandClose, ACTION_close, &GarageRight);
+    initHandler(&CommandInterrupts[CmdLeftOpen],   LeftCommandOpen,   ACTION_open,  &GarageLeft);
+    initHandler(&CommandInterrupts[CmdLeftClose],  LeftCommandClose,  ACTION_close, &GarageLeft);
+    initHandler(&CommandInterrupts[CmdRightOpen],  RightCommandOpen,  ACTION_open,  &GarageRight);
+    initHandler(&CommandInterrupts[CmdRightClose], RightCommandClose, ACTION_close, &GarageRight);
 
-    SensorInterrupts[SensorLeftOpen]    = initHandler(SensorInterrupt,  LeftSensorOpen,    ACTION_sens_open,   &GarageLeft);
-    SensorInterrupts[SensorLeftClosed]  = initHandler(SensorInterrupt,  LeftSensorOpen,    ACTION_sens_closed, &GarageLeft);
-    SensorInterrupts[SensorRightOpen]   = initHandler(SensorInterrupt,  RightSensorOpen,   ACTION_sens_open,   &GarageRight);
-    SensorInterrupts[SensorRightClosed] = initHandler(SensorInterrupt,  RightSensorClosed, ACTION_sens_closed, &GarageRight);
+    initHandler(&SensorInterrupts[SensorLeftOpen],   LeftSensorOpen,    ACTION_sens_open,   &GarageLeft);
+    initHandler(&SensorInterrupts[SensorLeftClosed], LeftSensorClosed,  ACTION_sens_closed, &GarageLeft);
+    initHandler(&SensorInterrupts[SensorRightOpen],  RightSensorOpen,   ACTION_sens_open,   &GarageRight);
+    initHandler(&SensorInterrupts[SensorRightClosed],RightSensorClosed, ACTION_sens_closed, &GarageRight);
 }
 
 void initStateMaschine() {
@@ -55,21 +61,36 @@ void initStateMaschine() {
     stateMachine[stopped][ACTION_sens_closed]  = initState(error,    DO_ACTION_NONE);
     stateMachine[stopped][ACTION_sens_open]    = initState(error,    DO_ACTION_NONE);
 
+    //undefined
+    stateMachine[undefined][ACTION_open]       = initState(undefined,DO_ACTION_EXECUTE);
+    stateMachine[undefined][ACTION_close]      = initState(undefined,DO_ACTION_EXECUTE);
+    stateMachine[undefined][ACTION_sens_closed]= initState(closed,   DO_ACTION_NONE);
+    stateMachine[undefined][ACTION_sens_open]  = initState(error,    DO_ACTION_NONE);
+
+    //error
+    stateMachine[error][ACTION_open]           = initState(error,    DO_ACTION_EXECUTE);  //we want to leave this state after all, same one below
+    stateMachine[error][ACTION_close]          = initState(error,    DO_ACTION_EXECUTE);
+    stateMachine[error][ACTION_sens_closed]    = initState(closed,   DO_ACTION_NONE);
+    stateMachine[error][ACTION_sens_open]      = initState(open,     DO_ACTION_NONE);
 }
 
 void initGarageState(){
 
-    if( isSensorSet( SensorInPort, LeftSensorClosed ) )
+    if( isSensorSet(LeftSensorClosed ) )
         GarageLeft.current = closed;
 
-    if( isSensorSet( SensorInPort, LeftSensorOpen ) )
+    if( isSensorSet(LeftSensorOpen ) )
         GarageLeft.current = open;
 
-    if( isSensorSet( SensorInPort, RightSensorClosed ) )
+    if( isSensorSet( RightSensorClosed ) )
         GarageRight.current = closed;
 
-    if( isSensorSet( SensorInPort, RightSensorOpen ) )
+    if( isSensorSet( RightSensorOpen ) )
         GarageRight.current = open;
+
+    uint8_t stateSummary = (GarageLeft.current << GarageLeft.stateOffset) | (GarageRight.current << GarageRight.stateOffset);
+    setOutput(StateOutPort, stateSummary);
+
 }
 
 void configurePins(){
@@ -79,24 +100,31 @@ void configurePins(){
     enablePullup(CommandPullupEnable,CommandPortConfig);
     configurePullups(CommandPullupConfig, CommandPortConfig);
 
-    risingEdgeIRQ(CommandISREdgeSelect, CommandPortConfig);
+    fallingEdgeIRQ(CommandISREdgeSelect, CommandPortConfig);
     enablePinInterrupt(CommandInterruptEnable, CommandPortConfig);
 
     clrOutput(CommandInterrupt, 0xFF);
+    clrOutput(CommandInPort, 0xFF);
 
     //configure ports for Sensor input
     setPinAsInput(SensorDirPort, SensorPortConfig);
     enablePullup(SensorPullupEnable, SensorPortConfig);
     configurePullups(SensorPullupConfig, SensorPortConfig);
 
-    risingEdgeIRQ(SensorISREdgeSelect, SensorPortConfig);
+    fallingEdgeIRQ(SensorISREdgeSelect, SensorPortConfig);
     enablePinInterrupt(SensorInterruptEnable, SensorPortConfig);
 
     clrOutput(SensorInterrupt, 0xFF);
+    clrOutput(SensorInPort , 0xFF );
 
     //configure ports for data and relais output
     setPinAsOutput(TriggerDirPort, TriggerConfig);
     clrOutput(TriggerOutPort, 0xFF);
+
+    //configure state ports
+    setPinAsOutput(StateDirPort, StatePortConfig);
+    setOutput(StateOutPort, 0xff);
+
 }
 
 
@@ -109,11 +137,19 @@ int main(void)
 	initStateMaschine();                                                                    //define the statemachine in memory.
 	initInterruptHandler();                                                                 //connect the pin interrupts with actions
 
-    __bis_SR_register(LPM4_bits + GIE);                                                     //Enter LPM4 w/interrupt
-    __no_operation();                                                                       //all action is now handled via interrupts
-
+	while(1) {
+	    __bis_SR_register(LPM4_bits + GIE);                                                 //Enter LPM4 w/interrupt
+        __no_operation();                                                                   //all action is now handled via interrupts
+	}
 }
 
+inline void toggleStatusBit(uint8_t data){
+
+    clrOutput(StateOutPort, data);
+     __delay_cycles(500000);
+     setOutput(StateOutPort, data);
+
+}
 
 inline void triggerAction(GarageState* garage){
 
@@ -130,16 +166,23 @@ inline void handleStateChange(GarageState* garageState, Action action){
 
     StateInfo nextState = stateMachine[garageState->current][action];                       //get the next state based on the current state and the action that triggers this
 
-    if(nextState.triggers == DO_ACTION_CHECK && garageState->current == nextState.state){   //in case a move was interrupted and wants to be continued, multiple triggers are required
+    if(nextState.state == garageState->current)
+        return;
+
+    if(nextState.triggers == DO_ACTION_CHECK && garageState->previous == nextState.state){   //in case a move was interrupted and wants to be continued, multiple triggers are required
         nextState.triggers = DO_ACTION_CONT;
     }
 
     garageState->previous = garageState->current;                                           //before overwriting the current step, the previous state is saved
     garageState->current = nextState.state;                                                 //proceed to the next state in the statemachine
 
+    uint8_t stateSummary = (GarageLeft.current << GarageLeft.stateOffset) | (GarageRight.current << GarageRight.stateOffset);
+   // setOutput(StateOutPort, stateSummary);                                                  //state change, so now we create a new status byte from both garage states and output it to the status bits
+    toggleStatusBit(stateSummary);
 
     for(int8_t i = 0;  i < nextState.triggers; i++){          //trigger as often as needed for the required transition
         triggerAction(garageState);
+        __delay_cycles(CLOCK_SECOND * TRIGGER_DELAY);
     }
 }
 
@@ -152,9 +195,9 @@ __interrupt void Port_1(void) {
     for(uint8_t i = 0; i < CmdSize; i++){
 
         h = &CommandInterrupts[i];
-        if(isInterrupt(h->port, h->function)){
+        if(isCommandInterrupt(h->function)){
             handleStateChange(h->garage, h->action);
-            clrOutput(h->port, h->function);
+            clrCommandInterrupt(h->function);
             break;
         }
     }
@@ -170,9 +213,9 @@ __interrupt void Port_2(void) {
     for(uint8_t i = 0; i < SensorSize; i++){
 
         h = &SensorInterrupts[i];
-        if(isInterrupt(h->port, h->function)){
+        if(isSensorInterrupt(h->function)){
             handleStateChange(h->garage, h->action);
-            clrOutput(h->port, h->function);
+            clrSensorInterrupt(h->function);
             break;
         }
     }

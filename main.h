@@ -8,7 +8,9 @@
 #define TRIGGER_DELAY 1
 
 #define initState(s, t) (StateInfo){.state = s, .triggers = t}
-#define initHandler(r, b, a, g) (InterruptHandler){ .port = r, .function = b, .action = a, .garage = g }
+
+
+//#define initHandler(r, b, a, g) (InterruptHandler){ .port = r, .function = b, .action = a, .garage = g}
 
 #define DO_ACTION_NONE 0
 
@@ -47,7 +49,7 @@ typedef enum{
 } Action;
 
 typedef enum{
-    undefined = -1,
+    undefined = 0,
     open,
     mdown,
     closed,
@@ -63,6 +65,7 @@ typedef struct{
     State current;
     State previous;
     uint8_t trigger;
+    uint8_t stateOffset;
 } GarageState;
 
 typedef struct{
@@ -71,7 +74,6 @@ typedef struct{
 } StateInfo;
 
 typedef struct{
-    int port;
     uint8_t function;
     Action action;
     GarageState* garage;
