@@ -5,7 +5,7 @@
 #include "pins.h"
 
 #define CLOCK_SECOND 1000000    //runnning with 1MHz
-#define TRIGGER_DELAY 1
+#define TRIGGER_DELAY 0.5
 
 #define initState(s, t) (StateInfo){.state = s, .triggers = t}
 

@@ -74,6 +74,40 @@ void initStateMaschine() {
     stateMachine[error][ACTION_sens_open]      = initState(open,     DO_ACTION_NONE);
 }
 
+inline void getInitialValues(){
+
+    //Port 4 0-2 to read initial values //left
+    setPinAsInput(P4DIR, 0x07);
+    enablePullup(P4REN, 0x07);
+    configurePullups(P4OUT, 0x07);
+
+    //Port 3 0-2 to read initial values //right
+    setPinAsInput(P3DIR, 0x07);
+    enablePullup(P3REN, 0x07);
+    configurePullups(P3OUT, 0x07);
+
+    //get values
+    GarageLeft.previous = (State)(0x07 & ~(P4IN & 0x07));
+    GarageRight.previous = (State)(0x07 & ~(P3IN & 0x07));
+}
+
+
+inline void toggleStatusBit(uint8_t data){
+
+    clrOutput(StateOutPort, data);
+     __delay_cycles(500000);
+     setOutput(StateOutPort, data);
+
+}
+
+inline void setStateValue(){
+    uint8_t prevStateSummary = (GarageLeft.previous << GarageLeft.stateOffset) | (GarageRight.previous << GarageRight.stateOffset);
+    uint8_t curStateSummary = (GarageLeft.current << GarageLeft.stateOffset) | (GarageRight.current << GarageRight.stateOffset);
+    // setOutput(StateOutPort, stateSummary);                                                  //state change, so now we create a new status byte from both garage states and output it to the status bits
+    curStateSummary = prevStateSummary ^ curStateSummary;
+    toggleStatusBit(curStateSummary);
+}
+
 void initGarageState(){
 
     if( isSensorSet(LeftSensorClosed ) )
@@ -88,8 +122,7 @@ void initGarageState(){
     if( isSensorSet( RightSensorOpen ) )
         GarageRight.current = open;
 
-    uint8_t stateSummary = (GarageLeft.current << GarageLeft.stateOffset) | (GarageRight.current << GarageRight.stateOffset);
-    setOutput(StateOutPort, stateSummary);
+    setStateValue();
 
 }
 
@@ -132,6 +165,7 @@ int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	                                                            //stop watchdog timer
 	
+	getInitialValues();                                                                     //before anything else, we check for the state of the state output pins. Those might not be reset and cannot be determined otherwise.
 	configurePins();                                                                        //initialize the hardware pins
 	initGarageState();                                                                      //figure out the garage state based on the sensor input (pin input)
 	initStateMaschine();                                                                    //define the statemachine in memory.
@@ -143,13 +177,7 @@ int main(void)
 	}
 }
 
-inline void toggleStatusBit(uint8_t data){
 
-    clrOutput(StateOutPort, data);
-     __delay_cycles(500000);
-     setOutput(StateOutPort, data);
-
-}
 
 inline void triggerAction(GarageState* garage){
 
@@ -176,9 +204,7 @@ inline void handleStateChange(GarageState* garageState, Action action){
     garageState->previous = garageState->current;                                           //before overwriting the current step, the previous state is saved
     garageState->current = nextState.state;                                                 //proceed to the next state in the statemachine
 
-    uint8_t stateSummary = (GarageLeft.current << GarageLeft.stateOffset) | (GarageRight.current << GarageRight.stateOffset);
-   // setOutput(StateOutPort, stateSummary);                                                  //state change, so now we create a new status byte from both garage states and output it to the status bits
-    toggleStatusBit(stateSummary);
+    setStateValue();
 
     for(int8_t i = 0;  i < nextState.triggers; i++){          //trigger as often as needed for the required transition
         triggerAction(garageState);
